@@ -25,29 +25,29 @@ export function TrendChart({ points }) {
     <div style={{ width: '100%', height: 320 }}>
       <ResponsiveContainer>
         <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis />
+          <CartesianGrid strokeDasharray="3 3" stroke="#e8d8c2" />
+          <XAxis dataKey="date" stroke="#7f705f" />
+          <YAxis stroke="#7f705f" />
           <Tooltip />
           <Legend />
           <Line
             type="monotone"
             dataKey="fakePct"
-            stroke="#dc2626"
+            stroke="#b2442e"
             name="Fake %"
             strokeWidth={2}
           />
           <Line
             type="monotone"
             dataKey="sarcasmPct"
-            stroke="#f59e0b"
+            stroke="#b07b2a"
             name="Sarcasm %"
             strokeWidth={2}
           />
           <Line
             type="monotone"
             dataKey="avgTrust"
-            stroke="#2563eb"
+            stroke="#5f6f87"
             name="Avg Trust"
             strokeWidth={2}
           />

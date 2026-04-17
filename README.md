@@ -4,13 +4,13 @@ Full-stack dashboard for noisy multilingual reviews with:
 
 - Gemini for fake-review + feature-level sentiment extraction
 - Grok for sarcasm / ambiguity detection
-- In-memory trust scoring (review, product, consumer)
+- SQLite-backed trust scoring (review, product, consumer)
 - Trend and emerging issue detection over time
 
 ## Stack
 
 - **Frontend:** React + Vite + Recharts
-- **Backend:** Node.js + Express (no database required)
+- **Backend:** Node.js + Express + SQLite (`better-sqlite3`)
 - **AI APIs:** Gemini, Grok
 
 ## Backend setup
@@ -24,13 +24,27 @@ npm run dev
 
 Set these keys in `backend/.env`:
 
+- `SQLITE_DB_PATH` (default: `data/review_intelligence.sqlite`)
 - `GEMINI_API_KEY`
 - `GROK_API_KEY`
 
-Note: data is stored in memory for the current process and resets on server restart.
-Optional memory caps:
-- `MAX_IN_MEMORY_REVIEWS` (default `10000`)
-- `MAX_IN_MEMORY_MODEL_RUNS` (default `50000`)
+Data persists in the SQLite file and survives backend restarts.
+
+## SQLite installation process (Arch Linux)
+
+You do **not** need a DB server. Installing backend dependencies already installs the embedded SQLite driver:
+
+```bash
+cd backend
+npm install
+```
+
+Optional (for inspecting DB from terminal):
+
+```bash
+sudo pacman -S sqlite
+sqlite3 backend/data/review_intelligence.sqlite
+```
 
 ## Frontend setup
 

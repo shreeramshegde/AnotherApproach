@@ -1,7 +1,9 @@
 const app = require("./app");
 const { port } = require("./config/env");
+const { initializeDatabase } = require("./db/sqlite");
 
 async function startServer() {
+  initializeDatabase();
   app.listen(port, () => {
     console.log(`Backend listening on http://localhost:${port}`);
   });

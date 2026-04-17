@@ -130,35 +130,58 @@ async function analyzeReviewById(reviewId) {
       verifiedPurchase: review.verifiedPurchase,
     });
 
-    review.translatedText = "";
-    review.translatedFrom = "";
-    review.sarcasmScore = sarcasm.sarcasmScore;
-    review.sarcasmExplanation = sarcasm.explanation;
-    review.flags.hasSarcasm = sarcasm.sarcasmScore >= 0.55;
-    review.flags.isAmbiguous = isAmbiguous;
-    review.isFake = gemini.isFake;
-    review.fakeConfidence = gemini.fakeConfidence;
-    review.fakeReason = gemini.fakeReason;
-    review.spamLikelihood = gemini.spamLikelihood;
-    review.flags.isSpamSuspected = review.flags.isSpamSuspected || gemini.spamLikelihood >= 0.75;
-    review.overallSentiment = gemini.overallSentiment;
-    review.featureSentiments = gemini.featureSentiments;
-    review.actionableInsights = gemini.actionableInsights;
-    review.reviewTrustScore = trust.score;
-    review.trustBreakdown = trust.breakdown;
-    review.analysisStatus = "completed";
-    review.analysisError = "";
-    review.updatedAt = new Date();
+    const updatedFlags = {
+      ...(review.flags || {}),
+      hasSarcasm: sarcasm.sarcasmScore >= 0.55,
+      isAmbiguous,
+      isSpamSuspected: Boolean(
+        review.flags?.isSpamSuspected || gemini.spamLikelihood >= 0.75
+      ),
+    };
+
+    store.updateReviewAnalysis(reviewId, {
+      translatedText: "",
+      translatedFrom: "",
+      sarcasmScore: sarcasm.sarcasmScore,
+      sarcasmExplanation: sarcasm.explanation,
+      flags: updatedFlags,
+      isFake: gemini.isFake,
+      fakeConfidence: gemini.fakeConfidence,
+      fakeReason: gemini.fakeReason,
+      spamLikelihood: gemini.spamLikelihood,
+      overallSentiment: gemini.overallSentiment,
+      featureSentiments: gemini.featureSentiments,
+      actionableInsights: gemini.actionableInsights,
+      reviewTrustScore: trust.score,
+      trustBreakdown: trust.breakdown,
+      analysisStatus: "completed",
+      analysisError: "",
+    });
 
     refreshProductAggregate(review.productId);
     refreshConsumerAggregate(review.consumerId);
     refreshDailyMetric(review.createdAt);
 
-    return review;
+    return store.getReviewById(reviewId);
   } catch (error) {
-    review.analysisStatus = "failed";
-    review.analysisError = error.message;
-    review.updatedAt = new Date();
+    store.updateReviewAnalysis(reviewId, {
+      translatedText: review.translatedText,
+      translatedFrom: review.translatedFrom,
+      sarcasmScore: review.sarcasmScore,
+      sarcasmExplanation: review.sarcasmExplanation,
+      flags: review.flags,
+      isFake: review.isFake,
+      fakeConfidence: review.fakeConfidence,
+      fakeReason: review.fakeReason,
+      spamLikelihood: review.spamLikelihood,
+      overallSentiment: review.overallSentiment,
+      featureSentiments: review.featureSentiments,
+      actionableInsights: review.actionableInsights,
+      reviewTrustScore: review.reviewTrustScore,
+      trustBreakdown: review.trustBreakdown,
+      analysisStatus: "failed",
+      analysisError: error.message,
+    });
     throw error;
   } finally {
     inFlightReviewAnalyses.delete(reviewId);

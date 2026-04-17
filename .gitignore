@@ -6,6 +6,8 @@ frontend/node_modules/
 backend/dist/
 frontend/dist/
 frontend/dist-ssr/
+backend/data/*.sqlite
+backend/data/*.sqlite-*
 
 # Environment files
 .env

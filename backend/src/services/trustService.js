@@ -38,12 +38,10 @@ function refreshProductAggregate(productId) {
     return;
   }
 
-  const reviews = store
-    .getAllReviews()
-    .filter((item) => item.productId === productId && item.analysisStatus === "completed");
+  const reviews = store.getCompletedReviewsByProduct(productId);
 
   if (reviews.length === 0) {
-    Object.assign(product, {
+    store.updateProductAggregate(productId, {
       reviewCount: 0,
       avgTrust: 0,
       fakeRate: 0,
@@ -51,7 +49,6 @@ function refreshProductAggregate(productId) {
       productTrustScore: 0,
       featureScores: {},
       lastUpdatedAt: new Date(),
-      updatedAt: new Date(),
     });
     return;
   }
@@ -93,7 +90,7 @@ function refreshProductAggregate(productId) {
     100
   );
 
-  Object.assign(product, {
+  store.updateProductAggregate(productId, {
     reviewCount,
     avgTrust,
     fakeRate,
@@ -101,7 +98,6 @@ function refreshProductAggregate(productId) {
     productTrustScore,
     featureScores,
     lastUpdatedAt: new Date(),
-    updatedAt: new Date(),
   });
 }
 
@@ -111,19 +107,16 @@ function refreshConsumerAggregate(consumerId) {
     return;
   }
 
-  const reviews = store
-    .getAllReviews()
-    .filter((item) => item.consumerId === consumerId && item.analysisStatus === "completed");
+  const reviews = store.getCompletedReviewsByConsumer(consumerId);
 
   if (reviews.length === 0) {
-    Object.assign(consumer, {
+    store.updateConsumerAggregate(consumerId, {
       reviewCount: 0,
       avgTrust: 0,
       consumerTrustScore: 0,
       suspiciousReviewRate: 0,
       riskFlags: [],
       lastUpdatedAt: new Date(),
-      updatedAt: new Date(),
     });
     return;
   }
@@ -150,14 +143,13 @@ function refreshConsumerAggregate(consumerId) {
     riskFlags.push("low_historical_trust");
   }
 
-  Object.assign(consumer, {
+  store.updateConsumerAggregate(consumerId, {
     reviewCount,
     avgTrust,
     consumerTrustScore,
     suspiciousReviewRate,
     riskFlags,
     lastUpdatedAt: new Date(),
-    updatedAt: new Date(),
   });
 }
 
