@@ -4,13 +4,13 @@ Full-stack dashboard for noisy multilingual reviews with:
 
 - Gemini for fake-review + feature-level sentiment extraction
 - Grok for sarcasm / ambiguity detection
-- In-memory trust scoring (review, product, consumer)
+- MongoDB-backed trust scoring (review, product, consumer)
 - Trend and emerging issue detection over time
 
 ## Stack
 
 - **Frontend:** React + Vite + Recharts
-- **Backend:** Node.js + Express (no database required)
+- **Backend:** Node.js + Express + MongoDB (Mongoose)
 - **AI APIs:** Gemini, Grok
 
 ## Backend setup
@@ -24,13 +24,9 @@ npm run dev
 
 Set these keys in `backend/.env`:
 
+- `MONGODB_URI`
 - `GEMINI_API_KEY`
 - `GROK_API_KEY`
-
-Note: data is stored in memory for the current process and resets on server restart.
-Optional memory caps:
-- `MAX_IN_MEMORY_REVIEWS` (default `10000`)
-- `MAX_IN_MEMORY_MODEL_RUNS` (default `50000`)
 
 ## Frontend setup
 

@@ -1,6 +1,8 @@
+const { DailyMetric } = require("../models/DailyMetric");
+const { Product } = require("../models/Product");
+const { Consumer } = require("../models/Consumer");
+const { Review } = require("../models/Review");
 const env = require("../config/env");
-const store = require("../store/memoryStore");
-const { refreshProductAggregate, refreshConsumerAggregate } = require("../services/trustService");
 
 function badRequest(message) {
   const error = new Error(message);
@@ -17,44 +19,94 @@ function toDayString(dateLike) {
   return date.toISOString().slice(0, 10);
 }
 
-function getCompletedReviews() {
-  return store
-    .getAllReviews()
-    .filter((item) => item.analysisStatus === "completed");
-}
-
 async function getOverview(req, res, next) {
   try {
-    const allReviews = store.getAllReviews();
-    const completed = getCompletedReviews();
-    const analyzedReviews = completed.length;
+    const [summary] = await Review.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalReviews: { $sum: 1 },
+          analyzedReviews: {
+            $sum: { $cond: [{ $eq: ["$analysisStatus", "completed"] }, 1, 0] },
+          },
+          failedReviews: {
+            $sum: { $cond: [{ $eq: ["$analysisStatus", "failed"] }, 1, 0] },
+          },
+          fakeCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$analysisStatus", "completed"] },
+                    { $eq: ["$isFake", true] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          sarcasticCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$analysisStatus", "completed"] },
+                    { $gte: ["$sarcasmScore", 0.55] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          ambiguousCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$analysisStatus", "completed"] },
+                    { $eq: ["$flags.isAmbiguous", true] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          avgTrust: {
+            $avg: {
+              $cond: [{ $eq: ["$analysisStatus", "completed"] }, "$reviewTrustScore", null],
+            },
+          },
+        },
+      },
+    ]);
+
+    const analyzedReviews = summary?.analyzedReviews || 0;
     const denominator = analyzedReviews || 1;
 
-    const fakeCount = completed.filter((item) => item.isFake).length;
-    const sarcasticCount = completed.filter((item) => (item.sarcasmScore || 0) >= 0.55).length;
-    const ambiguousCount = completed.filter((item) => item.flags?.isAmbiguous).length;
-    const avgTrust =
-      analyzedReviews === 0
-        ? 0
-        : completed.reduce((acc, item) => acc + (item.reviewTrustScore || 0), 0) /
-          analyzedReviews;
-
     res.json({
-      totalReviews: allReviews.length,
+      totalReviews: summary?.totalReviews || 0,
       analyzedReviews,
-      failedReviews: allReviews.filter((item) => item.analysisStatus === "failed").length,
-      fakeRate: fakeCount / denominator,
-      sarcasmRate: sarcasticCount / denominator,
-      ambiguousRate: ambiguousCount / denominator,
-      avgTrust,
+      failedReviews: summary?.failedReviews || 0,
+      fakeRate: (summary?.fakeCount || 0) / denominator,
+      sarcasmRate: (summary?.sarcasticCount || 0) / denominator,
+      ambiguousRate: (summary?.ambiguousCount || 0) / denominator,
+      avgTrust: summary?.avgTrust || 0,
     });
   } catch (error) {
     next(error);
   }
 }
 
-function getEmergingFeatureTrends(windowSize = 50) {
-  const reviews = [...getCompletedReviews()].sort((a, b) => b.createdAt - a.createdAt);
+async function getEmergingFeatureTrends(windowSize = 50) {
+  const reviews = await Review.find({ analysisStatus: "completed" })
+    .sort({ createdAt: -1 })
+    .limit(windowSize * 2)
+    .select("featureSentiments")
+    .lean();
+
   const recent = reviews.slice(0, windowSize);
   const previous = reviews.slice(windowSize, windowSize * 2);
   if (recent.length === 0 || previous.length === 0) {
@@ -109,57 +161,17 @@ async function getTrends(req, res, next) {
       ? toDayString(`${req.query.from}T00:00:00.000Z`)
       : toDayString(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
 
-    const map = new Map();
-    for (const review of getCompletedReviews()) {
-      const day = toDayString(review.createdAt);
-      if (day < from || day > to) {
-        continue;
-      }
-
-      const current = map.get(day) || {
-        date: day,
-        totalReviews: 0,
-        fakeCount: 0,
-        sarcasmCount: 0,
-        ambiguousCount: 0,
-        trustTotal: 0,
-        featureNegativeMentions: {},
-      };
-
-      current.totalReviews += 1;
-      current.fakeCount += review.isFake ? 1 : 0;
-      current.sarcasmCount += (review.sarcasmScore || 0) >= 0.55 ? 1 : 0;
-      current.ambiguousCount += review.flags?.isAmbiguous ? 1 : 0;
-      current.trustTotal += review.reviewTrustScore || 0;
-
-      for (const feature of review.featureSentiments || []) {
-        if (feature.sentiment !== "negative") {
-          continue;
-        }
-        current.featureNegativeMentions[feature.feature] =
-          (current.featureNegativeMentions[feature.feature] || 0) + 1;
-      }
-
-      map.set(day, current);
-    }
-
-    const points = [...map.values()]
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((item) => ({
-        date: item.date,
-        totalReviews: item.totalReviews,
-        fakeRate: item.totalReviews ? item.fakeCount / item.totalReviews : 0,
-        sarcasmRate: item.totalReviews ? item.sarcasmCount / item.totalReviews : 0,
-        ambiguousRate: item.totalReviews ? item.ambiguousCount / item.totalReviews : 0,
-        avgTrust: item.totalReviews ? item.trustTotal / item.totalReviews : 0,
-        featureNegativeMentions: item.featureNegativeMentions,
-      }));
+    const metrics = await DailyMetric.find({
+      date: { $gte: from, $lte: to },
+    })
+      .sort({ date: 1 })
+      .lean();
 
     res.json({
       from,
       to,
-      points,
-      emergingIssues: getEmergingFeatureTrends(50),
+      points: metrics,
+      emergingIssues: await getEmergingFeatureTrends(50),
     });
   } catch (error) {
     next(error);
@@ -168,19 +180,11 @@ async function getTrends(req, res, next) {
 
 async function getProductTrust(req, res, next) {
   try {
-    for (const product of store.getAllProducts()) {
-      refreshProductAggregate(product._id);
-    }
-
     const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 500);
-    const items = [...store.getAllProducts()]
-      .sort((a, b) => {
-        if (b.productTrustScore !== a.productTrustScore) {
-          return b.productTrustScore - a.productTrustScore;
-        }
-        return b.reviewCount - a.reviewCount;
-      })
-      .slice(0, limit);
+    const items = await Product.find({})
+      .sort({ productTrustScore: -1, reviewCount: -1 })
+      .limit(limit)
+      .lean();
     res.json({ items });
   } catch (error) {
     next(error);
@@ -189,19 +193,11 @@ async function getProductTrust(req, res, next) {
 
 async function getConsumerTrust(req, res, next) {
   try {
-    for (const consumer of store.getAllConsumers()) {
-      refreshConsumerAggregate(consumer._id);
-    }
-
     const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 500);
-    const items = [...store.getAllConsumers()]
-      .sort((a, b) => {
-        if (b.consumerTrustScore !== a.consumerTrustScore) {
-          return b.consumerTrustScore - a.consumerTrustScore;
-        }
-        return b.reviewCount - a.reviewCount;
-      })
-      .slice(0, limit);
+    const items = await Consumer.find({})
+      .sort({ consumerTrustScore: -1, reviewCount: -1 })
+      .limit(limit)
+      .lean();
     res.json({ items });
   } catch (error) {
     next(error);

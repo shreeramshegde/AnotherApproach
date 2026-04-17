@@ -1,13 +1,17 @@
 const { parse: parseCsv } = require("csv-parse/sync");
+const mongoose = require("mongoose");
+const { Review } = require("../models/Review");
+const { Product } = require("../models/Product");
+const { Consumer } = require("../models/Consumer");
 const { analyzeReviewById, analyzeInBackground } = require("../services/analysisPipeline");
 const { parseBoolean, parseNumber } = require("../utils/parsers");
 const { normalizeText, jaccardSimilarity, detectLikelySpam } = require("../utils/text");
 const { sha256 } = require("../utils/hash");
-const store = require("../store/memoryStore");
 
 function badRequest(message) {
   const error = new Error(message);
   error.statusCode = 400;
+  error.isClientSafe = true;
   return error;
 }
 
@@ -18,6 +22,10 @@ function pickFirst(...values) {
     }
   }
   return "";
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function toReviewInput(rawItem, source) {
@@ -95,11 +103,87 @@ function parseUploadedRows(req) {
   } catch {
     throw badRequest("Invalid CSV file.");
   }
+
   return { rows, source: "csv" };
 }
 
-function checkNearDuplicate(productId, text) {
-  const recent = store.getRecentReviewsByProduct(productId, 40);
+async function getOrCreateProduct({ name, category }) {
+  return Product.findOneAndUpdate(
+    { name, category },
+    {
+      $setOnInsert: {
+        name,
+        category,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    }
+  );
+}
+
+async function getOrCreateConsumer({ name, externalId, verified }) {
+  if (!externalId) {
+    const existing = await Consumer.findOne({
+      externalId: "",
+      name: new RegExp(`^${escapeRegex(name)}$`, "i"),
+    });
+    if (existing) {
+      existing.verified = verified;
+      await existing.save();
+      return existing;
+    }
+
+    return Consumer.create({
+      name,
+      externalId: "",
+      verified,
+    });
+  }
+
+  try {
+    return await Consumer.findOneAndUpdate(
+      { externalId },
+      {
+        $setOnInsert: {
+          name,
+          externalId,
+          verified,
+        },
+        $set: {
+          verified,
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+      }
+    );
+  } catch (error) {
+    if (error?.code !== 11000) {
+      throw error;
+    }
+
+    const existing = await Consumer.findOne({ externalId });
+    if (!existing) {
+      throw error;
+    }
+    existing.verified = verified;
+    await existing.save();
+    return existing;
+  }
+}
+
+async function checkNearDuplicate(productId, text) {
+  const recent = await Review.find({ productId })
+    .sort({ createdAt: -1 })
+    .limit(40)
+    .select("text")
+    .lean();
+
   let highestScore = 0;
   for (const row of recent) {
     const score = jaccardSimilarity(text, row.text);
@@ -107,29 +191,8 @@ function checkNearDuplicate(productId, text) {
       highestScore = score;
     }
   }
-  return highestScore;
-}
 
-function hydrateReview(review) {
-  const product = store.getProductById(review.productId);
-  const consumer = store.getConsumerById(review.consumerId);
-  return {
-    ...review,
-    productId: product
-      ? {
-          _id: product._id,
-          name: product.name,
-          category: product.category,
-        }
-      : null,
-    consumerId: consumer
-      ? {
-          _id: consumer._id,
-          name: consumer.name,
-          externalId: consumer.externalId,
-        }
-      : null,
-  };
+  return highestScore;
 }
 
 async function importReviews(req, res, next) {
@@ -149,11 +212,11 @@ async function importReviews(req, res, next) {
       const rawItem = rows[rowIndex];
       try {
         const input = toReviewInput(rawItem, source);
-        const product = store.getOrCreateProduct({
+        const product = await getOrCreateProduct({
           name: input.productName,
           category: input.productCategory,
         });
-        const consumer = store.getOrCreateConsumer({
+        const consumer = await getOrCreateConsumer({
           name: input.consumerName,
           externalId: input.consumerExternalId,
           verified: input.verifiedPurchase,
@@ -161,14 +224,17 @@ async function importReviews(req, res, next) {
 
         const normalized = normalizeText(input.text);
         const normalizedTextHash = sha256(normalized);
-        const duplicate = store.existsDuplicateReview(product._id, normalizedTextHash);
-        const nearDuplicateScore = checkNearDuplicate(product._id, input.text);
+        const duplicate = await Review.exists({
+          productId: product._id,
+          normalizedTextHash,
+        });
+        const nearDuplicateScore = await checkNearDuplicate(product._id, input.text);
         const isNearDuplicate = nearDuplicateScore >= 0.88;
         const spamHeuristic = detectLikelySpam(input.text);
         const isSpamSuspected =
           spamHeuristic.isLikelySpam || Boolean(duplicate) || isNearDuplicate;
 
-        const review = store.addReview({
+        const review = await Review.create({
           source: input.source,
           externalId: input.externalId,
           title: input.title,
@@ -233,10 +299,18 @@ async function importReviews(req, res, next) {
   }
 }
 
+async function getReviewWithRefs(reviewId) {
+  return Review.findById(reviewId)
+    .populate("productId", "name category")
+    .populate("consumerId", "name externalId")
+    .lean();
+}
+
 async function analyzeReview(req, res, next) {
   try {
     const review = await analyzeReviewById(req.params.id);
-    res.json(hydrateReview(review));
+    const hydrated = await getReviewWithRefs(review._id);
+    res.json(hydrated || review);
   } catch (error) {
     next(error);
   }
@@ -245,11 +319,11 @@ async function analyzeReview(req, res, next) {
 async function createFeedReview(req, res, next) {
   try {
     const input = toReviewInput(req.body, "api-feed");
-    const product = store.getOrCreateProduct({
+    const product = await getOrCreateProduct({
       name: input.productName,
       category: input.productCategory,
     });
-    const consumer = store.getOrCreateConsumer({
+    const consumer = await getOrCreateConsumer({
       name: input.consumerName,
       externalId: input.consumerExternalId,
       verified: input.verifiedPurchase,
@@ -257,14 +331,17 @@ async function createFeedReview(req, res, next) {
 
     const normalized = normalizeText(input.text);
     const normalizedTextHash = sha256(normalized);
-    const duplicate = store.existsDuplicateReview(product._id, normalizedTextHash);
-    const nearDuplicateScore = checkNearDuplicate(product._id, input.text);
+    const duplicate = await Review.exists({
+      productId: product._id,
+      normalizedTextHash,
+    });
+    const nearDuplicateScore = await checkNearDuplicate(product._id, input.text);
     const spamHeuristic = detectLikelySpam(input.text);
     const isNearDuplicate = nearDuplicateScore >= 0.88;
     const isSpamSuspected =
       spamHeuristic.isLikelySpam || Boolean(duplicate) || isNearDuplicate;
 
-    const review = store.addReview({
+    const review = await Review.create({
       source: input.source,
       externalId: input.externalId,
       title: input.title,
@@ -288,11 +365,13 @@ async function createFeedReview(req, res, next) {
     const immediate = parseBoolean(req.body.immediateAnalyze, true);
     if (immediate) {
       const analyzed = await analyzeReviewById(review._id);
-      res.status(201).json(hydrateReview(analyzed));
+      const hydrated = await getReviewWithRefs(analyzed._id);
+      res.status(201).json(hydrated || analyzed);
       return;
     }
 
-    res.status(201).json(hydrateReview(review));
+    const hydrated = await getReviewWithRefs(review._id);
+    res.status(201).json(hydrated || review);
   } catch (error) {
     next(error);
   }
@@ -304,51 +383,58 @@ async function listReviews(req, res, next) {
     const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
     const skip = (page - 1) * limit;
 
-    let items = store.getAllReviews();
-
+    const filters = {};
     if (req.query.productId) {
-      items = items.filter((item) => item.productId === req.query.productId);
+      if (!mongoose.isValidObjectId(req.query.productId)) {
+        throw badRequest("productId must be a valid id.");
+      }
+      filters.productId = req.query.productId;
     }
     if (req.query.consumerId) {
-      items = items.filter((item) => item.consumerId === req.query.consumerId);
+      if (!mongoose.isValidObjectId(req.query.consumerId)) {
+        throw badRequest("consumerId must be a valid id.");
+      }
+      filters.consumerId = req.query.consumerId;
     }
-    if (req.query.analysisStatus) {
-      items = items.filter((item) => item.analysisStatus === req.query.analysisStatus);
-    }
-    if (req.query.isFake === "true") {
-      items = items.filter((item) => item.isFake === true);
-    }
-    if (req.query.isFake === "false") {
-      items = items.filter((item) => item.isFake === false);
-    }
+    if (req.query.analysisStatus) filters.analysisStatus = req.query.analysisStatus;
+    if (req.query.isFake === "true") filters.isFake = true;
+    if (req.query.isFake === "false") filters.isFake = false;
 
     if (req.query.minTrust) {
       const minTrust = Number(req.query.minTrust);
       if (!Number.isFinite(minTrust)) {
         throw badRequest("minTrust must be a valid number.");
       }
-      items = items.filter((item) => Number(item.reviewTrustScore || 0) >= minTrust);
+      filters.reviewTrustScore = { $gte: minTrust };
     }
-
     if (req.query.maxTrust) {
       const maxTrust = Number(req.query.maxTrust);
       if (!Number.isFinite(maxTrust)) {
         throw badRequest("maxTrust must be a valid number.");
       }
-      items = items.filter((item) => Number(item.reviewTrustScore || 0) <= maxTrust);
+      filters.reviewTrustScore = {
+        ...(filters.reviewTrustScore || {}),
+        $lte: maxTrust,
+      };
     }
 
-    items = [...items].sort((a, b) => b.createdAt - a.createdAt);
-
-    const total = items.length;
-    const paged = items.slice(skip, skip + limit).map(hydrateReview);
+    const [items, total] = await Promise.all([
+      Review.find(filters)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("productId", "name category")
+        .populate("consumerId", "name externalId")
+        .lean(),
+      Review.countDocuments(filters),
+    ]);
 
     res.json({
       page,
       limit,
       total,
       totalPages: Math.ceil(total / limit),
-      items: paged,
+      items,
     });
   } catch (error) {
     next(error);
