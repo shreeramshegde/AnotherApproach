@@ -10,7 +10,6 @@ function asInt(value, fallback) {
 
 const env = {
   port: asInt(process.env.PORT, 4000),
-  mongoUri: process.env.MONGODB_URI,
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:5173",
   geminiApiKey: process.env.GEMINI_API_KEY || "",
   geminiModel: process.env.GEMINI_MODEL || "gemini-1.5-flash",

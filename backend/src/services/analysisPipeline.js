@@ -1,7 +1,5 @@
 const env = require("../config/env");
-const mongoose = require("mongoose");
-const { Review } = require("../models/Review");
-const { ModelRun } = require("../models/ModelRun");
+const store = require("../store/memoryStore");
 const { sha256 } = require("../utils/hash");
 const { detectSarcasm } = require("./grokService");
 const { analyzeReviewWithGemini } = require("./geminiService");
@@ -14,7 +12,11 @@ const {
 
 const inFlightReviewAnalyses = new Set();
 
-async function recordModelRun({
+function toSerializableModelOutput(result) {
+  return result.rawResponse || result;
+}
+
+function recordModelRun({
   reviewId,
   provider,
   model,
@@ -24,7 +26,7 @@ async function recordModelRun({
   outputPayload,
   errorMessage = "",
 }) {
-  await ModelRun.create({
+  store.addModelRun({
     reviewId,
     provider,
     model,
@@ -48,18 +50,18 @@ async function runStep({
   try {
     const result = await execute();
     const status = result.providerStatus === "success" ? "success" : "skipped";
-    await recordModelRun({
+    recordModelRun({
       reviewId,
       provider,
       model,
       status,
       latencyMs: Date.now() - startedAt,
       inputPayload,
-      outputPayload: result.rawResponse || result,
+      outputPayload: toSerializableModelOutput(result),
     });
     return result;
   } catch (error) {
-    await recordModelRun({
+    recordModelRun({
       reviewId,
       provider,
       model,
@@ -74,14 +76,7 @@ async function runStep({
 }
 
 async function analyzeReviewById(reviewId) {
-  if (!mongoose.isValidObjectId(reviewId)) {
-    const error = new Error(`Invalid review id: ${reviewId}`);
-    error.statusCode = 400;
-    error.isClientSafe = true;
-    throw error;
-  }
-
-  const review = await Review.findById(reviewId);
+  const review = store.getReviewById(reviewId);
   if (!review) {
     const error = new Error(`Review not found: ${reviewId}`);
     error.statusCode = 404;
@@ -89,14 +84,14 @@ async function analyzeReviewById(reviewId) {
     throw error;
   }
 
-  if (inFlightReviewAnalyses.has(String(reviewId))) {
+  if (inFlightReviewAnalyses.has(reviewId)) {
     const error = new Error(`Analysis already running for review: ${reviewId}`);
     error.statusCode = 409;
     error.isClientSafe = true;
     throw error;
   }
 
-  inFlightReviewAnalyses.add(String(reviewId));
+  inFlightReviewAnalyses.add(reviewId);
   try {
     const analyzedText = review.text;
     const sarcasm = await runStep({
@@ -113,8 +108,8 @@ async function analyzeReviewById(reviewId) {
       rating: review.rating,
       language: review.language,
       sarcasmScore: sarcasm.sarcasmScore,
-      productId: String(review.productId),
-      consumerId: String(review.consumerId),
+      productId: review.productId,
+      consumerId: review.consumerId,
     };
     const gemini = await runStep({
       reviewId: review._id,
@@ -153,22 +148,20 @@ async function analyzeReviewById(reviewId) {
     review.trustBreakdown = trust.breakdown;
     review.analysisStatus = "completed";
     review.analysisError = "";
-    await review.save();
+    review.updatedAt = new Date();
 
-    await Promise.all([
-      refreshProductAggregate(review.productId),
-      refreshConsumerAggregate(review.consumerId),
-      refreshDailyMetric(review.createdAt),
-    ]);
+    refreshProductAggregate(review.productId);
+    refreshConsumerAggregate(review.consumerId);
+    refreshDailyMetric(review.createdAt);
 
     return review;
   } catch (error) {
     review.analysisStatus = "failed";
     review.analysisError = error.message;
-    await review.save();
+    review.updatedAt = new Date();
     throw error;
   } finally {
-    inFlightReviewAnalyses.delete(String(reviewId));
+    inFlightReviewAnalyses.delete(reviewId);
   }
 }
 
