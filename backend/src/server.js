@@ -1,6 +1,6 @@
 const app = require("./app");
 const { port } = require("./config/env");
-const { initializeDatabase } = require("./db/sqlite");
+const { initializeDatabase } = require("./db/mongodb");
 
 async function startServer() {
   initializeDatabase();

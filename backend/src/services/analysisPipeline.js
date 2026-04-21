@@ -1,7 +1,6 @@
 const env = require("../config/env");
 const store = require("../store/memoryStore");
 const { sha256 } = require("../utils/hash");
-const { detectSarcasm } = require("./grokService");
 const { analyzeReviewWithGemini } = require("./geminiService");
 const {
   computeReviewTrust,
@@ -26,7 +25,7 @@ function recordModelRun({
   outputPayload,
   errorMessage = "",
 }) {
-  store.addModelRun({
+  return store.addModelRun({
     reviewId,
     provider,
     model,
@@ -50,7 +49,7 @@ async function runStep({
   try {
     const result = await execute();
     const status = result.providerStatus === "success" ? "success" : "skipped";
-    recordModelRun({
+    await recordModelRun({
       reviewId,
       provider,
       model,
@@ -61,7 +60,7 @@ async function runStep({
     });
     return result;
   } catch (error) {
-    recordModelRun({
+    await recordModelRun({
       reviewId,
       provider,
       model,
@@ -76,7 +75,7 @@ async function runStep({
 }
 
 async function analyzeReviewById(reviewId) {
-  const review = store.getReviewById(reviewId);
+  const review = await store.getReviewById(reviewId);
   if (!review) {
     const error = new Error(`Review not found: ${reviewId}`);
     error.statusCode = 404;
@@ -93,21 +92,11 @@ async function analyzeReviewById(reviewId) {
 
   inFlightReviewAnalyses.add(reviewId);
   try {
-    const analyzedText = review.text;
-    const sarcasm = await runStep({
-      reviewId: review._id,
-      provider: "grok",
-      model: env.grokModel,
-      inputPayload: { text: analyzedText },
-      execute: () => detectSarcasm(analyzedText),
-    });
-
     const geminiInput = {
-      reviewText: analyzedText,
+      reviewText: review.text,
       title: review.title,
       rating: review.rating,
       language: review.language,
-      sarcasmScore: sarcasm.sarcasmScore,
       productId: review.productId,
       consumerId: review.consumerId,
     };
@@ -119,12 +108,10 @@ async function analyzeReviewById(reviewId) {
       execute: () => analyzeReviewWithGemini(geminiInput),
     });
 
-    const isAmbiguous = Boolean(
-      sarcasm.isAmbiguous || gemini.overallSentiment === "ambiguous"
-    );
+    const isAmbiguous = Boolean(gemini.isAmbiguous || gemini.overallSentiment === "ambiguous");
     const trust = computeReviewTrust({
       fakeConfidence: gemini.fakeConfidence,
-      sarcasmScore: sarcasm.sarcasmScore,
+      sarcasmScore: gemini.sarcasmScore,
       spamLikelihood: gemini.spamLikelihood,
       isAmbiguous,
       verifiedPurchase: review.verifiedPurchase,
@@ -132,18 +119,18 @@ async function analyzeReviewById(reviewId) {
 
     const updatedFlags = {
       ...(review.flags || {}),
-      hasSarcasm: sarcasm.sarcasmScore >= 0.55,
+      hasSarcasm: gemini.sarcasmScore >= 0.55,
       isAmbiguous,
       isSpamSuspected: Boolean(
         review.flags?.isSpamSuspected || gemini.spamLikelihood >= 0.75
       ),
     };
 
-    store.updateReviewAnalysis(reviewId, {
+    await store.updateReviewAnalysis(reviewId, {
       translatedText: "",
       translatedFrom: "",
-      sarcasmScore: sarcasm.sarcasmScore,
-      sarcasmExplanation: sarcasm.explanation,
+      sarcasmScore: gemini.sarcasmScore,
+      sarcasmExplanation: gemini.sarcasmExplanation,
       flags: updatedFlags,
       isFake: gemini.isFake,
       fakeConfidence: gemini.fakeConfidence,
@@ -158,13 +145,13 @@ async function analyzeReviewById(reviewId) {
       analysisError: "",
     });
 
-    refreshProductAggregate(review.productId);
-    refreshConsumerAggregate(review.consumerId);
+    await refreshProductAggregate(review.productId);
+    await refreshConsumerAggregate(review.consumerId);
     refreshDailyMetric(review.createdAt);
 
     return store.getReviewById(reviewId);
   } catch (error) {
-    store.updateReviewAnalysis(reviewId, {
+    await store.updateReviewAnalysis(reviewId, {
       translatedText: review.translatedText,
       translatedFrom: review.translatedFrom,
       sarcasmScore: review.sarcasmScore,

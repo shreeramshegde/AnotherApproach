@@ -98,8 +98,8 @@ function parseUploadedRows(req) {
   return { rows, source: "csv" };
 }
 
-function checkNearDuplicate(productId, text) {
-  const recent = store.getRecentReviewsByProduct(productId, 40);
+async function checkNearDuplicate(productId, text) {
+  const recent = await store.getRecentReviewsByProduct(productId, 40);
   let highestScore = 0;
   for (const row of recent) {
     const score = jaccardSimilarity(text, row.text);
@@ -110,9 +110,11 @@ function checkNearDuplicate(productId, text) {
   return highestScore;
 }
 
-function hydrateReview(review) {
-  const product = store.getProductById(review.productId);
-  const consumer = store.getConsumerById(review.consumerId);
+async function hydrateReview(review) {
+  const [product, consumer] = await Promise.all([
+    store.getProductById(review.productId),
+    store.getConsumerById(review.consumerId),
+  ]);
   return {
     ...review,
     productId: product
@@ -149,11 +151,11 @@ async function importReviews(req, res, next) {
       const rawItem = rows[rowIndex];
       try {
         const input = toReviewInput(rawItem, source);
-        const product = store.getOrCreateProduct({
+        const product = await store.getOrCreateProduct({
           name: input.productName,
           category: input.productCategory,
         });
-        const consumer = store.getOrCreateConsumer({
+        const consumer = await store.getOrCreateConsumer({
           name: input.consumerName,
           externalId: input.consumerExternalId,
           verified: input.verifiedPurchase,
@@ -161,14 +163,14 @@ async function importReviews(req, res, next) {
 
         const normalized = normalizeText(input.text);
         const normalizedTextHash = sha256(normalized);
-        const duplicate = store.existsDuplicateReview(product._id, normalizedTextHash);
-        const nearDuplicateScore = checkNearDuplicate(product._id, input.text);
+        const duplicate = await store.existsDuplicateReview(product._id, normalizedTextHash);
+        const nearDuplicateScore = await checkNearDuplicate(product._id, input.text);
         const isNearDuplicate = nearDuplicateScore >= 0.88;
         const spamHeuristic = detectLikelySpam(input.text);
         const isSpamSuspected =
           spamHeuristic.isLikelySpam || Boolean(duplicate) || isNearDuplicate;
 
-        const review = store.addReview({
+        const review = await store.addReview({
           source: input.source,
           externalId: input.externalId,
           title: input.title,
@@ -236,7 +238,7 @@ async function importReviews(req, res, next) {
 async function analyzeReview(req, res, next) {
   try {
     const review = await analyzeReviewById(req.params.id);
-    res.json(hydrateReview(review));
+    res.json(await hydrateReview(review));
   } catch (error) {
     next(error);
   }
@@ -245,11 +247,11 @@ async function analyzeReview(req, res, next) {
 async function createFeedReview(req, res, next) {
   try {
     const input = toReviewInput(req.body, "api-feed");
-    const product = store.getOrCreateProduct({
+    const product = await store.getOrCreateProduct({
       name: input.productName,
       category: input.productCategory,
     });
-    const consumer = store.getOrCreateConsumer({
+    const consumer = await store.getOrCreateConsumer({
       name: input.consumerName,
       externalId: input.consumerExternalId,
       verified: input.verifiedPurchase,
@@ -257,14 +259,14 @@ async function createFeedReview(req, res, next) {
 
     const normalized = normalizeText(input.text);
     const normalizedTextHash = sha256(normalized);
-    const duplicate = store.existsDuplicateReview(product._id, normalizedTextHash);
-    const nearDuplicateScore = checkNearDuplicate(product._id, input.text);
+    const duplicate = await store.existsDuplicateReview(product._id, normalizedTextHash);
+    const nearDuplicateScore = await checkNearDuplicate(product._id, input.text);
     const spamHeuristic = detectLikelySpam(input.text);
     const isNearDuplicate = nearDuplicateScore >= 0.88;
     const isSpamSuspected =
       spamHeuristic.isLikelySpam || Boolean(duplicate) || isNearDuplicate;
 
-    const review = store.addReview({
+    const review = await store.addReview({
       source: input.source,
       externalId: input.externalId,
       title: input.title,
@@ -288,11 +290,11 @@ async function createFeedReview(req, res, next) {
     const immediate = parseBoolean(req.body.immediateAnalyze, true);
     if (immediate) {
       const analyzed = await analyzeReviewById(review._id);
-      res.status(201).json(hydrateReview(analyzed));
+      res.status(201).json(await hydrateReview(analyzed));
       return;
     }
 
-    res.status(201).json(hydrateReview(review));
+    res.status(201).json(await hydrateReview(review));
   } catch (error) {
     next(error);
   }
@@ -304,7 +306,7 @@ async function listReviews(req, res, next) {
     const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10), 1), 100);
     const skip = (page - 1) * limit;
 
-    let items = store.getAllReviews();
+    let items = await store.getAllReviews();
 
     if (req.query.productId) {
       items = items.filter((item) => item.productId === req.query.productId);
@@ -341,7 +343,7 @@ async function listReviews(req, res, next) {
     items = [...items].sort((a, b) => b.createdAt - a.createdAt);
 
     const total = items.length;
-    const paged = items.slice(skip, skip + limit).map(hydrateReview);
+    const paged = await Promise.all(items.slice(skip, skip + limit).map(hydrateReview));
 
     res.json({
       page,

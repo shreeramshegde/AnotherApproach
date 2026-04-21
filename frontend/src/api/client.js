@@ -38,6 +38,13 @@ export const api = {
   getProducts: () => request('/dashboard/products'),
   getConsumers: () => request('/dashboard/consumers'),
   getModelHealth: () => request('/dashboard/health/models'),
+  downloadReport: async () => {
+    const response = await fetch(buildUrl('/dashboard/report'))
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`)
+    }
+    return response.text()
+  },
   getReviews: (params = {}) => request('/reviews', {}, params),
   analyzeReview: (reviewId) =>
     request(`/reviews/${reviewId}/analyze`, {

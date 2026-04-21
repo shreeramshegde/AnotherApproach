@@ -19,6 +19,8 @@ export function ReviewsPage({ refreshVersion }) {
   const [error, setError] = useState('')
   const [importMessage, setImportMessage] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [analyzingId, setAnalyzingId] = useState('')
   const [manualForm, setManualForm] = useState({
     reviewText: '',
     productName: '',
@@ -100,6 +102,7 @@ export function ReviewsPage({ refreshVersion }) {
     setError('')
     setImportMessage('')
     try {
+      setUploading(true)
       const payload = await api.importReviewsFile({ file: selectedFile, autoAnalyze: true })
       setImportMessage(
         `Imported ${payload.importedCount} review(s), duplicates: ${payload.duplicateCount}, near-duplicates: ${payload.nearDuplicateCount}, spam-flagged: ${payload.spamFlaggedCount}.`,
@@ -108,16 +111,21 @@ export function ReviewsPage({ refreshVersion }) {
       await loadReviews()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setUploading(false)
     }
   }
 
   async function runAnalyze(reviewId) {
     setError('')
     try {
+      setAnalyzingId(reviewId)
       await api.analyzeReview(reviewId)
       await loadReviews()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setAnalyzingId('')
     }
   }
 
@@ -138,7 +146,10 @@ export function ReviewsPage({ refreshVersion }) {
           accept=".csv,.json"
           onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
         />
-        <button onClick={uploadDataset}>Upload Dataset</button>
+        <button onClick={uploadDataset} disabled={uploading}>
+          {uploading ? 'Uploading...' : 'Upload Dataset'}
+        </button>
+        {selectedFile ? <span className="muted">Selected: {selectedFile.name}</span> : null}
       </div>
 
       <form onSubmit={submitManualReview}>
@@ -323,7 +334,9 @@ export function ReviewsPage({ refreshVersion }) {
                       <span className="muted">{row.analysisStatus}</span>
                     </td>
                     <td>
-                      <button onClick={() => runAnalyze(row._id)}>Analyze</button>
+                      <button onClick={() => runAnalyze(row._id)} disabled={analyzingId === row._id}>
+                        {analyzingId === row._id ? 'Analyzing...' : 'Analyze'}
+                      </button>
                     </td>
                   </tr>
                 ))

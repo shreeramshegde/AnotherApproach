@@ -2,16 +2,16 @@
 
 Full-stack dashboard for noisy multilingual reviews with:
 
-- Gemini for fake-review + feature-level sentiment extraction
-- Grok for sarcasm / ambiguity detection
-- SQLite-backed trust scoring (review, product, consumer)
-- Trend and emerging issue detection over time
+- Gemini-only pipeline for fake-review, sarcasm/ambiguity, and feature-level sentiment extraction
+- MongoDB-backed trust scoring (review, product, consumer)
+- Trend detection with systemic vs isolated issue classification and anomaly alerts
+- Downloadable JSON intelligence report for product and marketing teams
 
 ## Stack
 
 - **Frontend:** React + Vite + Recharts
-- **Backend:** Node.js + Express + SQLite (`better-sqlite3`)
-- **AI APIs:** Gemini, Grok
+- **Backend:** Node.js + Express + MongoDB (`mongodb`)
+- **AI APIs:** Gemini
 
 ## Backend setup
 
@@ -24,26 +24,17 @@ npm run dev
 
 Set these keys in `backend/.env`:
 
-- `SQLITE_DB_PATH` (default: `data/review_intelligence.sqlite`)
+- `MONGODB_URI` (default: `mongodb://127.0.0.1:27017`)
+- `MONGODB_DB_NAME` (default: `review_intelligence`)
+- `MONGODB_USERNAME` (example: `admin`)
+- `MONGODB_PASSWORD` (optional in `.env`; if omitted and username is set, backend prompts at startup)
 - `GEMINI_API_KEY`
-- `GROK_API_KEY`
 
-Data persists in the SQLite file and survives backend restarts.
-
-## SQLite installation process (Arch Linux)
-
-You do **not** need a DB server. Installing backend dependencies already installs the embedded SQLite driver:
+Run MongoDB locally (example on Arch Linux):
 
 ```bash
-cd backend
-npm install
-```
-
-Optional (for inspecting DB from terminal):
-
-```bash
-sudo pacman -S sqlite
-sqlite3 backend/data/review_intelligence.sqlite
+sudo pacman -S mongodb-bin
+sudo systemctl enable --now mongodb
 ```
 
 ## Frontend setup
@@ -67,3 +58,4 @@ Frontend uses `/api` proxy to `http://localhost:4000`.
 - `GET /api/dashboard/products`
 - `GET /api/dashboard/consumers`
 - `GET /api/dashboard/health/models`
+- `GET /api/dashboard/report` (download structured report JSON)

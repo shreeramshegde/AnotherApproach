@@ -15,6 +15,9 @@ function heuristicFallback(input) {
       : "No strong fake-review heuristic signal.",
     overallSentiment: "neutral",
     spamLikelihood: isSuspicious ? 0.6 : 0.2,
+    sarcasmScore: 0.2,
+    isAmbiguous: false,
+    sarcasmExplanation: "Heuristic fallback: no model-based sarcasm detection available.",
     featureSentiments: [],
     actionableInsights: [],
     providerStatus: "skipped",
@@ -39,6 +42,9 @@ You analyze retail product reviews. Return STRICT JSON only:
   "fakeReason": string,
   "overallSentiment": "positive" | "negative" | "neutral" | "mixed" | "ambiguous",
   "spamLikelihood": number,
+  "sarcasmScore": number,
+  "isAmbiguous": boolean,
+  "sarcasmExplanation": string,
   "featureSentiments": [
     {
       "feature": string,
@@ -51,6 +57,7 @@ You analyze retail product reviews. Return STRICT JSON only:
 }
 Rules:
 - fakeConfidence and spamLikelihood are in [0,1].
+- sarcasmScore is in [0,1]; >= 0.55 means strong sarcasm.
 - Include at least 3 major features when possible (packaging, quality, delivery, taste, durability, support, etc).
 - Use "ambiguous" when sarcasm/mixed wording blocks clear polarity.
 - Keep evidence snippets short.
@@ -111,6 +118,9 @@ ${JSON.stringify(input)}
       fakeReason: String(parsed.fakeReason || ""),
       overallSentiment: String(parsed.overallSentiment || "neutral"),
       spamLikelihood: clamp(Number(parsed.spamLikelihood) || 0, 0, 1),
+      sarcasmScore: clamp(Number(parsed.sarcasmScore) || 0, 0, 1),
+      isAmbiguous: Boolean(parsed.isAmbiguous),
+      sarcasmExplanation: String(parsed.sarcasmExplanation || ""),
       featureSentiments,
       actionableInsights: Array.isArray(parsed.actionableInsights)
         ? parsed.actionableInsights.map((x) => String(x))

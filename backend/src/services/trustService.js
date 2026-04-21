@@ -32,16 +32,16 @@ function computeReviewTrust({
   };
 }
 
-function refreshProductAggregate(productId) {
-  const product = store.getProductById(productId);
+async function refreshProductAggregate(productId) {
+  const product = await store.getProductById(productId);
   if (!product) {
     return;
   }
 
-  const reviews = store.getCompletedReviewsByProduct(productId);
+  const reviews = await store.getCompletedReviewsByProduct(productId);
 
   if (reviews.length === 0) {
-    store.updateProductAggregate(productId, {
+    await store.updateProductAggregate(productId, {
       reviewCount: 0,
       avgTrust: 0,
       fakeRate: 0,
@@ -90,7 +90,7 @@ function refreshProductAggregate(productId) {
     100
   );
 
-  store.updateProductAggregate(productId, {
+  await store.updateProductAggregate(productId, {
     reviewCount,
     avgTrust,
     fakeRate,
@@ -101,16 +101,16 @@ function refreshProductAggregate(productId) {
   });
 }
 
-function refreshConsumerAggregate(consumerId) {
-  const consumer = store.getConsumerById(consumerId);
+async function refreshConsumerAggregate(consumerId) {
+  const consumer = await store.getConsumerById(consumerId);
   if (!consumer) {
     return;
   }
 
-  const reviews = store.getCompletedReviewsByConsumer(consumerId);
+  const reviews = await store.getCompletedReviewsByConsumer(consumerId);
 
   if (reviews.length === 0) {
-    store.updateConsumerAggregate(consumerId, {
+    await store.updateConsumerAggregate(consumerId, {
       reviewCount: 0,
       avgTrust: 0,
       consumerTrustScore: 0,
@@ -143,7 +143,7 @@ function refreshConsumerAggregate(consumerId) {
     riskFlags.push("low_historical_trust");
   }
 
-  store.updateConsumerAggregate(consumerId, {
+  await store.updateConsumerAggregate(consumerId, {
     reviewCount,
     avgTrust,
     consumerTrustScore,

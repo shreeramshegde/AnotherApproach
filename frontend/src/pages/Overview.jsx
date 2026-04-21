@@ -11,6 +11,8 @@ export function OverviewPage({ refreshVersion }) {
   const [overview, setOverview] = useState(null)
   const [trends, setTrends] = useState([])
   const [emergingIssues, setEmergingIssues] = useState([])
+  const [isolatedComplaints, setIsolatedComplaints] = useState([])
+  const [anomalies, setAnomalies] = useState([])
   const [modelHealth, setModelHealth] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -30,6 +32,8 @@ export function OverviewPage({ refreshVersion }) {
         setOverview(overviewData)
         setTrends(trendData.points || [])
         setEmergingIssues(trendData.emergingIssues || [])
+        setIsolatedComplaints(trendData.isolatedComplaints || [])
+        setAnomalies(trendData.anomalies || [])
         setModelHealth(modelData)
       } catch (err) {
         if (cancelled) return
@@ -58,6 +62,24 @@ export function OverviewPage({ refreshVersion }) {
             Live KPI snapshot for fake reviews, sarcasm, trust, and model status.
           </p>
         </div>
+        <button
+          onClick={async () => {
+            try {
+              const report = await api.downloadReport()
+              const blob = new Blob([report], { type: 'application/json' })
+              const url = window.URL.createObjectURL(blob)
+              const anchor = document.createElement('a')
+              anchor.href = url
+              anchor.download = 'review-intelligence-report.json'
+              anchor.click()
+              window.URL.revokeObjectURL(url)
+            } catch (err) {
+              setError(err.message)
+            }
+          }}
+        >
+          Download report
+        </button>
       </header>
 
       {error ? <p className="error-text">{error}</p> : null}
@@ -83,10 +105,7 @@ export function OverviewPage({ refreshVersion }) {
           label="Gemini"
           value={modelHealth?.gemini?.configured ? 'Configured' : 'Missing API key'}
         />
-        <StatCard
-          label="Grok"
-          value={modelHealth?.grok?.configured ? 'Configured' : 'Missing API key'}
-        />
+        <StatCard label="Model" value={modelHealth?.gemini?.model || '-'} />
       </div>
 
       <div style={{ marginTop: 18 }}>
@@ -113,6 +132,51 @@ export function OverviewPage({ refreshVersion }) {
                     <td>{item.recentPct}%</td>
                     <td>{item.previousPct}%</td>
                     <td>{item.deltaPct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <h3 className="section-title" style={{ fontSize: 18, marginBottom: 8 }}>
+          Isolated Complaints
+        </h3>
+        {!isolatedComplaints.length ? (
+          <p className="muted">No isolated complaint spikes in the latest windows.</p>
+        ) : (
+          <p className="muted">
+            {isolatedComplaints.map((item) => `${item.feature} (${item.recentCount})`).join(', ')}
+          </p>
+        )}
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <h3 className="section-title" style={{ fontSize: 18, marginBottom: 8 }}>
+          Anomaly Alerts
+        </h3>
+        {!anomalies.length ? (
+          <p className="muted">No major sentiment-drop anomaly detected.</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Feature</th>
+                  <th>Type</th>
+                  <th>Delta %</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anomalies.map((item) => (
+                  <tr key={`${item.feature}-${item.type}`}>
+                    <td>{item.feature}</td>
+                    <td>{item.type}</td>
+                    <td>{item.deltaPct}%</td>
+                    <td>{item.message}</td>
                   </tr>
                 ))}
               </tbody>
