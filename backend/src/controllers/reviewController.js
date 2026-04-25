@@ -1,7 +1,12 @@
 const { parse: parseCsv } = require("csv-parse/sync");
 const { analyzeReviewById, analyzeInBackground } = require("../services/analysisPipeline");
 const { parseBoolean, parseNumber } = require("../utils/parsers");
-const { normalizeText, jaccardSimilarity, detectLikelySpam } = require("../utils/text");
+const {
+  normalizeText,
+  jaccardSimilarity,
+  detectLikelySpam,
+  detectLikelyBot,
+} = require("../utils/text");
 const { sha256 } = require("../utils/hash");
 const store = require("../store/memoryStore");
 
@@ -101,13 +106,15 @@ function parseUploadedRows(req) {
 async function checkNearDuplicate(productId, text) {
   const recent = await store.getRecentReviewsByProduct(productId, 40);
   let highestScore = 0;
+  let closestReview = null;
   for (const row of recent) {
     const score = jaccardSimilarity(text, row.text);
     if (score > highestScore) {
       highestScore = score;
+      closestReview = row;
     }
   }
-  return highestScore;
+  return { highestScore, closestReview };
 }
 
 async function hydrateReview(review) {
@@ -146,6 +153,7 @@ async function importReviews(req, res, next) {
     let duplicateCount = 0;
     let nearDuplicateCount = 0;
     let spamFlaggedCount = 0;
+    let botFlaggedCount = 0;
 
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
       const rawItem = rows[rowIndex];
@@ -164,11 +172,26 @@ async function importReviews(req, res, next) {
         const normalized = normalizeText(input.text);
         const normalizedTextHash = sha256(normalized);
         const duplicate = await store.existsDuplicateReview(product._id, normalizedTextHash);
-        const nearDuplicateScore = await checkNearDuplicate(product._id, input.text);
+        const duplicateRow = duplicate
+          ? await store.findDuplicateReview(product._id, normalizedTextHash)
+          : null;
+        const { highestScore: nearDuplicateScore, closestReview } = await checkNearDuplicate(
+          product._id,
+          input.text
+        );
         const isNearDuplicate = nearDuplicateScore >= 0.88;
         const spamHeuristic = detectLikelySpam(input.text);
+        const botHeuristic = detectLikelyBot(input.text);
         const isSpamSuspected =
           spamHeuristic.isLikelySpam || Boolean(duplicate) || isNearDuplicate;
+        const nearDuplicateCluster =
+          isNearDuplicate || duplicate
+            ? closestReview?.nearDuplicateCluster ||
+              closestReview?.normalizedTextHash?.slice(0, 16) ||
+              duplicateRow?.nearDuplicateCluster ||
+              duplicateRow?.normalizedTextHash?.slice(0, 16) ||
+              normalizedTextHash.slice(0, 16)
+            : "";
 
         const review = await store.addReview({
           source: input.source,
@@ -182,12 +205,14 @@ async function importReviews(req, res, next) {
           productId: product._id,
           consumerId: consumer._id,
           nearDuplicateScore,
-          nearDuplicateCluster: isNearDuplicate ? normalizedTextHash.slice(0, 16) : "",
+          nearDuplicateCluster,
           flags: {
             isDuplicate: Boolean(duplicate),
             isNearDuplicate,
             isSpamSuspected,
+            isBotLikely: botHeuristic.isLikelyBot,
             hasSarcasm: false,
+            needsHumanReview: false,
             isAmbiguous: false,
           },
         });
@@ -195,6 +220,7 @@ async function importReviews(req, res, next) {
         if (duplicate) duplicateCount += 1;
         if (isNearDuplicate) nearDuplicateCount += 1;
         if (isSpamSuspected) spamFlaggedCount += 1;
+        if (botHeuristic.isLikelyBot) botFlaggedCount += 1;
         createdReviews.push(review);
       } catch (rowError) {
         failedRows.push({
@@ -227,6 +253,7 @@ async function importReviews(req, res, next) {
       duplicateCount,
       nearDuplicateCount,
       spamFlaggedCount,
+      botFlaggedCount,
       analysis: autoAnalyze ? "queued" : "skipped",
       reviewIds,
     });
@@ -260,11 +287,26 @@ async function createFeedReview(req, res, next) {
     const normalized = normalizeText(input.text);
     const normalizedTextHash = sha256(normalized);
     const duplicate = await store.existsDuplicateReview(product._id, normalizedTextHash);
-    const nearDuplicateScore = await checkNearDuplicate(product._id, input.text);
+    const duplicateRow = duplicate
+      ? await store.findDuplicateReview(product._id, normalizedTextHash)
+      : null;
+    const { highestScore: nearDuplicateScore, closestReview } = await checkNearDuplicate(
+      product._id,
+      input.text
+    );
     const spamHeuristic = detectLikelySpam(input.text);
+    const botHeuristic = detectLikelyBot(input.text);
     const isNearDuplicate = nearDuplicateScore >= 0.88;
     const isSpamSuspected =
       spamHeuristic.isLikelySpam || Boolean(duplicate) || isNearDuplicate;
+    const nearDuplicateCluster =
+      isNearDuplicate || duplicate
+        ? closestReview?.nearDuplicateCluster ||
+          closestReview?.normalizedTextHash?.slice(0, 16) ||
+          duplicateRow?.nearDuplicateCluster ||
+          duplicateRow?.normalizedTextHash?.slice(0, 16) ||
+          normalizedTextHash.slice(0, 16)
+        : "";
 
     const review = await store.addReview({
       source: input.source,
@@ -278,11 +320,14 @@ async function createFeedReview(req, res, next) {
       productId: product._id,
       consumerId: consumer._id,
       nearDuplicateScore,
+      nearDuplicateCluster,
       flags: {
         isDuplicate: Boolean(duplicate),
         isNearDuplicate,
         isSpamSuspected,
+        isBotLikely: botHeuristic.isLikelyBot,
         hasSarcasm: false,
+        needsHumanReview: false,
         isAmbiguous: false,
       },
     });
@@ -322,6 +367,16 @@ async function listReviews(req, res, next) {
     }
     if (req.query.isFake === "false") {
       items = items.filter((item) => item.isFake === false);
+    }
+
+    if (req.query.needsHumanReview === "true") {
+      items = items.filter((item) => item.flags?.needsHumanReview === true);
+    }
+    if (req.query.isBotLikely === "true") {
+      items = items.filter((item) => item.flags?.isBotLikely === true);
+    }
+    if (req.query.isSpamSuspected === "true") {
+      items = items.filter((item) => item.flags?.isSpamSuspected === true);
     }
 
     if (req.query.minTrust) {

@@ -121,6 +121,13 @@
   font-size: 14px;
 }
 
+.section-subblock {
+  border: 1px solid #e2cfb3;
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 252, 246, 0.8);
+}
+
 .muted {
   color: #7f705f;
 }

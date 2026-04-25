@@ -60,14 +60,21 @@ async function getOrCreateConsumer({ name, externalId, verified }) {
   const verifiedBool = Boolean(verified);
 
   if (!safeExternalId) {
-    const existingWithoutExternal = await consumers.find({ externalId: "" }).toArray();
+    const existingWithoutExternal = await consumers
+      .find({
+        $or: [{ externalId: "" }, { externalId: { $exists: false } }],
+      })
+      .toArray();
     const existing = existingWithoutExternal.find(
       (item) => normalizeName(item.name) === normalizeName(safeName)
     );
     if (existing) {
       await consumers.updateOne(
         { _id: existing._id },
-        { $set: { verified: verifiedBool, updatedAt: now() } }
+        {
+          $set: { verified: verifiedBool, updatedAt: now() },
+          $unset: { externalId: "" },
+        }
       );
       return consumers.findOne({ _id: existing._id });
     }
@@ -76,7 +83,6 @@ async function getOrCreateConsumer({ name, externalId, verified }) {
     const created = {
       _id: createId("cns"),
       name: safeName,
-      externalId: "",
       verified: verifiedBool,
       reviewCount: 0,
       avgTrust: 0,
@@ -154,7 +160,9 @@ async function addReview(payload) {
       isDuplicate: false,
       isNearDuplicate: false,
       isSpamSuspected: false,
+      isBotLikely: false,
       hasSarcasm: false,
+      needsHumanReview: false,
       isAmbiguous: false,
     },
     analysisStatus: payload.analysisStatus || "pending",
@@ -263,6 +271,11 @@ async function existsDuplicateReview(productId, normalizedTextHash) {
   return Boolean(row);
 }
 
+async function findDuplicateReview(productId, normalizedTextHash) {
+  const { reviews } = getCollections();
+  return reviews.findOne({ productId, normalizedTextHash });
+}
+
 async function updateProductAggregate(productId, payload) {
   const { products } = getCollections();
   await products.updateOne(
@@ -343,6 +356,7 @@ module.exports = {
   getCompletedReviewsByConsumer,
   getRecentReviewsByProduct,
   existsDuplicateReview,
+  findDuplicateReview,
   updateProductAggregate,
   updateConsumerAggregate,
   updateReviewAnalysis,

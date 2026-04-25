@@ -120,10 +120,12 @@ async function analyzeReviewById(reviewId) {
     const updatedFlags = {
       ...(review.flags || {}),
       hasSarcasm: gemini.sarcasmScore >= 0.55,
+      isBotLikely: Boolean(review.flags?.isBotLikely),
       isAmbiguous,
       isSpamSuspected: Boolean(
         review.flags?.isSpamSuspected || gemini.spamLikelihood >= 0.75
       ),
+      needsHumanReview: Boolean(isAmbiguous || gemini.sarcasmScore >= 0.55),
     };
 
     await store.updateReviewAnalysis(reviewId, {

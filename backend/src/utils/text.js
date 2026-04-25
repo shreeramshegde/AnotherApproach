@@ -75,9 +75,51 @@ function detectLikelySpam(text) {
   return { isLikelySpam: false, reason: "" };
 }
 
+function detectLikelyBot(text) {
+  const tokens = tokenize(text);
+  if (tokens.length === 0) {
+    return { isLikelyBot: true, score: 1, reason: "Empty review text." };
+  }
+
+  const uniqueRatio = new Set(tokens).size / tokens.length;
+  const repeatedBigramCount = (() => {
+    const seen = new Map();
+    for (let i = 0; i < tokens.length - 1; i += 1) {
+      const bigram = `${tokens[i]} ${tokens[i + 1]}`;
+      seen.set(bigram, (seen.get(bigram) || 0) + 1);
+    }
+
+    let repeats = 0;
+    for (const count of seen.values()) {
+      if (count > 1) {
+        repeats += count - 1;
+      }
+    }
+    return repeats;
+  })();
+
+  const punctuationSpam = /[!?]{4,}/.test(text);
+  const scoreRaw =
+    (uniqueRatio < 0.4 ? 0.45 : 0) +
+    (repeatedBigramCount >= 2 ? 0.35 : 0) +
+    (punctuationSpam ? 0.2 : 0);
+  const score = Math.max(0, Math.min(1, scoreRaw));
+
+  if (score >= 0.65) {
+    return {
+      isLikelyBot: true,
+      score,
+      reason: "Highly repetitive structure suggests automated generation.",
+    };
+  }
+
+  return { isLikelyBot: false, score, reason: "" };
+}
+
 module.exports = {
   normalizeText,
   tokenize,
   jaccardSimilarity,
   detectLikelySpam,
+  detectLikelyBot,
 };

@@ -131,6 +131,46 @@ function buildTrendInsights(completedReviews, windowSize = 50) {
   };
 }
 
+function buildActionRecommendations({ emergingIssues, anomalies, isolatedComplaints }) {
+  const recommendations = [];
+
+  for (const issue of emergingIssues.slice(0, 5)) {
+    recommendations.push({
+      priority: issue.deltaPct >= 20 ? "high" : "medium",
+      feature: issue.feature,
+      category: "systemic_issue",
+      recommendation: `Investigate root cause for ${issue.feature}; negative mentions rose to ${issue.recentPct}% (${issue.deltaPct} pt change).`,
+      evidence: {
+        recentPct: issue.recentPct,
+        previousPct: issue.previousPct,
+        recentCount: issue.recentCount,
+      },
+    });
+  }
+
+  for (const anomaly of anomalies.slice(0, 3)) {
+    recommendations.push({
+      priority: anomaly.deltaPct >= 20 ? "high" : "medium",
+      feature: anomaly.feature,
+      category: "anomaly",
+      recommendation: `Run targeted QA and marketing copy review for ${anomaly.feature}.`,
+      evidence: { deltaPct: anomaly.deltaPct, message: anomaly.message },
+    });
+  }
+
+  if (isolatedComplaints.length > 0) {
+    recommendations.push({
+      priority: "low",
+      feature: "multiple",
+      category: "isolated_feedback",
+      recommendation: "Track isolated complaints for recurrence before broad corrective action.",
+      evidence: { sample: isolatedComplaints.slice(0, 3).map((item) => item.feature) },
+    });
+  }
+
+  return recommendations.slice(0, 8);
+}
+
 async function getTrends(req, res, next) {
   try {
     const to = req.query.to
@@ -192,6 +232,7 @@ async function getTrends(req, res, next) {
       from,
       to,
       points,
+      recommendations: buildActionRecommendations(insights),
       emergingIssues: insights.emergingIssues,
       isolatedComplaints: insights.isolatedComplaints,
       anomalies: insights.anomalies,
@@ -243,7 +284,7 @@ async function getConsumerTrust(req, res, next) {
 
 async function downloadReport(req, res, next) {
   try {
-    const [overview, trends, products, consumers] = await Promise.all([
+    const [overview, trends, recommendations, products, consumers] = await Promise.all([
       (async () => {
         const reviews = await store.getAllReviews();
         const completed = reviews.filter((item) => item.analysisStatus === "completed");
@@ -268,6 +309,11 @@ async function downloadReport(req, res, next) {
         const completed = await getCompletedReviews();
         return buildTrendInsights(completed, 50);
       })(),
+      (async () => {
+        const completed = await getCompletedReviews();
+        const insights = buildTrendInsights(completed, 50);
+        return buildActionRecommendations(insights);
+      })(),
       store.getAllProducts(),
       store.getAllConsumers(),
     ]);
@@ -277,6 +323,7 @@ async function downloadReport(req, res, next) {
       model: { provider: "gemini", configured: Boolean(env.geminiApiKey), model: env.geminiModel },
       overview,
       trends,
+      recommendations,
       topProducts: [...products]
         .sort((a, b) => b.productTrustScore - a.productTrustScore)
         .slice(0, 10),

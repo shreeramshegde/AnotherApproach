@@ -13,6 +13,7 @@ export function OverviewPage({ refreshVersion }) {
   const [emergingIssues, setEmergingIssues] = useState([])
   const [isolatedComplaints, setIsolatedComplaints] = useState([])
   const [anomalies, setAnomalies] = useState([])
+  const [recommendations, setRecommendations] = useState([])
   const [modelHealth, setModelHealth] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -34,6 +35,7 @@ export function OverviewPage({ refreshVersion }) {
         setEmergingIssues(trendData.emergingIssues || [])
         setIsolatedComplaints(trendData.isolatedComplaints || [])
         setAnomalies(trendData.anomalies || [])
+        setRecommendations(trendData.recommendations || [])
         setModelHealth(modelData)
       } catch (err) {
         if (cancelled) return
@@ -150,6 +152,38 @@ export function OverviewPage({ refreshVersion }) {
           <p className="muted">
             {isolatedComplaints.map((item) => `${item.feature} (${item.recentCount})`).join(', ')}
           </p>
+        )}
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <h3 className="section-title" style={{ fontSize: 18, marginBottom: 8 }}>
+          Prioritized Recommendations
+        </h3>
+        {!recommendations.length ? (
+          <p className="muted">No prioritized recommendations yet.</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Priority</th>
+                  <th>Category</th>
+                  <th>Feature</th>
+                  <th>Recommendation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recommendations.map((item, index) => (
+                  <tr key={`${item.category}-${item.feature}-${index}`}>
+                    <td>{item.priority}</td>
+                    <td>{item.category}</td>
+                    <td>{item.feature}</td>
+                    <td>{item.recommendation}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

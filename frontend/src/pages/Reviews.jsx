@@ -30,9 +30,21 @@ export function ReviewsPage({ refreshVersion }) {
     rating: '5',
     verifiedPurchase: true,
   })
+  const [feedForm, setFeedForm] = useState({
+    reviewText: '',
+    productName: '',
+    productCategory: 'general',
+    consumerName: '',
+    language: 'en',
+    rating: '4',
+    verifiedPurchase: true,
+  })
   const [filters, setFilters] = useState({
     analysisStatus: '',
     isFake: '',
+    needsHumanReview: '',
+    isBotLikely: '',
+    isSpamSuspected: '',
     minTrust: '',
   })
 
@@ -44,6 +56,9 @@ export function ReviewsPage({ refreshVersion }) {
         limit: 50,
         analysisStatus: filters.analysisStatus,
         isFake: filters.isFake,
+        needsHumanReview: filters.needsHumanReview,
+        isBotLikely: filters.isBotLikely,
+        isSpamSuspected: filters.isSpamSuspected,
         minTrust: filters.minTrust,
       })
       setRows(payload.items || [])
@@ -52,7 +67,14 @@ export function ReviewsPage({ refreshVersion }) {
     } finally {
       setLoading(false)
     }
-  }, [filters.analysisStatus, filters.isFake, filters.minTrust])
+  }, [
+    filters.analysisStatus,
+    filters.isFake,
+    filters.needsHumanReview,
+    filters.isBotLikely,
+    filters.isSpamSuspected,
+    filters.minTrust,
+  ])
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
@@ -105,7 +127,7 @@ export function ReviewsPage({ refreshVersion }) {
       setUploading(true)
       const payload = await api.importReviewsFile({ file: selectedFile, autoAnalyze: true })
       setImportMessage(
-        `Imported ${payload.importedCount} review(s), duplicates: ${payload.duplicateCount}, near-duplicates: ${payload.nearDuplicateCount}, spam-flagged: ${payload.spamFlaggedCount}.`,
+        `Imported ${payload.importedCount} review(s), duplicates: ${payload.duplicateCount}, near-duplicates: ${payload.nearDuplicateCount}, spam-flagged: ${payload.spamFlaggedCount}, bot-flagged: ${payload.botFlaggedCount || 0}.`,
       )
       setSelectedFile(null)
       await loadReviews()
@@ -113,6 +135,29 @@ export function ReviewsPage({ refreshVersion }) {
       setError(err.message)
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function submitFeedReview(event) {
+    event.preventDefault()
+    setError('')
+    setImportMessage('')
+    try {
+      await api.createFeedReview({
+        reviewText: feedForm.reviewText,
+        productName: feedForm.productName,
+        productCategory: feedForm.productCategory,
+        consumerName: feedForm.consumerName,
+        language: feedForm.language,
+        rating: Number(feedForm.rating),
+        verifiedPurchase: Boolean(feedForm.verifiedPurchase),
+        immediateAnalyze: true,
+      })
+      setImportMessage('Simulated API feed review added and analyzed.')
+      setFeedForm((current) => ({ ...current, reviewText: '' }))
+      await loadReviews()
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -151,6 +196,53 @@ export function ReviewsPage({ refreshVersion }) {
         </button>
         {selectedFile ? <span className="muted">Selected: {selectedFile.name}</span> : null}
       </div>
+
+      <form onSubmit={submitFeedReview}>
+        <div className="section-subblock">
+          <h3 className="section-title" style={{ fontSize: 16, margin: 0 }}>Simulated API Feed</h3>
+          <div className="form-grid" style={{ marginTop: 10 }}>
+            <input
+              placeholder="Product name"
+              value={feedForm.productName}
+              onChange={(event) =>
+                setFeedForm((current) => ({ ...current, productName: event.target.value }))
+              }
+              required
+            />
+            <input
+              placeholder="Consumer name"
+              value={feedForm.consumerName}
+              onChange={(event) =>
+                setFeedForm((current) => ({ ...current, consumerName: event.target.value }))
+              }
+              required
+            />
+            <select
+              value={feedForm.productCategory}
+              onChange={(event) =>
+                setFeedForm((current) => ({ ...current, productCategory: event.target.value }))
+              }
+            >
+              <option value="general">General</option>
+              <option value="electronics">Electronics</option>
+              <option value="beauty">Beauty</option>
+              <option value="food">Food</option>
+              <option value="grocery">Grocery</option>
+            </select>
+          </div>
+          <textarea
+            placeholder="Push a single review as API feed payload..."
+            value={feedForm.reviewText}
+            onChange={(event) =>
+              setFeedForm((current) => ({ ...current, reviewText: event.target.value }))
+            }
+            required
+          />
+          <div className="actions-row">
+            <button type="submit">Push to Feed</button>
+          </div>
+        </div>
+      </form>
 
       <form onSubmit={submitManualReview}>
         <div className="form-grid">
@@ -255,6 +347,33 @@ export function ReviewsPage({ refreshVersion }) {
           <option value="true">Fake only</option>
           <option value="false">Non-fake only</option>
         </select>
+        <select
+          value={filters.needsHumanReview}
+          onChange={(event) =>
+            setFilters((current) => ({ ...current, needsHumanReview: event.target.value }))
+          }
+        >
+          <option value="">All review-queue states</option>
+          <option value="true">Needs human review</option>
+        </select>
+        <select
+          value={filters.isBotLikely}
+          onChange={(event) =>
+            setFilters((current) => ({ ...current, isBotLikely: event.target.value }))
+          }
+        >
+          <option value="">All bot flags</option>
+          <option value="true">Bot-likely only</option>
+        </select>
+        <select
+          value={filters.isSpamSuspected}
+          onChange={(event) =>
+            setFilters((current) => ({ ...current, isSpamSuspected: event.target.value }))
+          }
+        >
+          <option value="">All spam flags</option>
+          <option value="true">Spam-suspected only</option>
+        </select>
         <input
           type="number"
           min="0"
@@ -325,6 +444,22 @@ export function ReviewsPage({ refreshVersion }) {
                       ) : (
                         <span className="pill good">Clear sentiment</span>
                       )}
+                      <br />
+                      {row.flags?.isSpamSuspected ? (
+                        <span className="pill warn">Spam suspected</span>
+                      ) : null}
+                      {row.flags?.isBotLikely ? (
+                        <>
+                          <br />
+                          <span className="pill bad">Bot likely</span>
+                        </>
+                      ) : null}
+                      {row.flags?.needsHumanReview ? (
+                        <>
+                          <br />
+                          <span className="pill warn">Needs human review</span>
+                        </>
+                      ) : null}
                     </td>
                     <td>
                       <span className={trustPill(row.reviewTrustScore || 0)}>

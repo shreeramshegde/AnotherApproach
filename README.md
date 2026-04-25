@@ -59,3 +59,10 @@ Frontend uses `/api` proxy to `http://localhost:4000`.
 - `GET /api/dashboard/consumers`
 - `GET /api/dashboard/health/models`
 - `GET /api/dashboard/report` (download structured report JSON)
+
+
+Additional capabilities implemented:
+
+- Simulated API feed ingestion is available via `POST /api/reviews/feed` and the dashboard UI.
+- Review explorer now supports human-review queue filters (`needsHumanReview`, `isBotLikely`, `isSpamSuspected`) and import responses include separate spam/bot counts.
+- Trends endpoint includes prioritized recommendations (`recommendations`) in addition to emerging issues/anomalies.
